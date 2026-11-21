@@ -76,16 +76,13 @@ jobs:
             exit 1
           fi
 
+          python3 -m pip install --break-system-packages --quiet Pillow || sudo apt-get update && sudo apt-get install -y --no-install-recommends python3-pil || true
+
           python3 - "$SRC_PNG" << 'EOF'
           import os, shutil, sys
-          from PIL import Image
 
           src_path = sys.argv[1]
           base_res = "app/src/main/res"
-
-          for d in ["mipmap-mdpi", "mipmap-hdpi", "mipmap-xhdpi", "mipmap-xxhdpi", "mipmap-xxxhdpi"]:
-              shutil.rmtree(os.path.join(base_res, d), ignore_errors=True)
-
           densities = {
               "mipmap-mdpi": 48,
               "mipmap-hdpi": 72,
@@ -94,26 +91,42 @@ jobs:
               "mipmap-xxxhdpi": 192,
           }
 
-          with Image.open(src_path) as im:
-              rgba = im.convert("RGBA")
+          for d in densities:
+              shutil.rmtree(os.path.join(base_res, d), ignore_errors=True)
 
-              for folder, px in densities.items():
+          try:
+              from PIL import Image
+
+              with Image.open(src_path) as im:
+                  rgba = im.convert("RGBA")
+
+                  for folder, px in densities.items():
+                      out_dir = os.path.join(base_res, folder)
+                      os.makedirs(out_dir, exist_ok=True)
+                      icon = rgba.resize((px, px), Image.Resampling.LANCZOS)
+                      icon.save(os.path.join(out_dir, "ic_launcher.png"), "PNG")
+                      icon.save(os.path.join(out_dir, "ic_launcher_round.png"), "PNG")
+
+                  fg_dir = os.path.join(base_res, "mipmap-xxxhdpi")
+                  os.makedirs(fg_dir, exist_ok=True)
+                  canvas_size = 432
+                  safe_size = 284
+                  fg_canvas = Image.new("RGBA", (canvas_size, canvas_size), (0, 0, 0, 0))
+                  fitted = rgba.copy()
+                  fitted.thumbnail((safe_size, safe_size), Image.Resampling.LANCZOS)
+                  offset = ((canvas_size - fitted.width) // 2, (canvas_size - fitted.height) // 2)
+                  fg_canvas.paste(fitted, offset, fitted)
+                  fg_canvas.save(os.path.join(fg_dir, "ic_launcher_foreground.png"), "PNG")
+          except ImportError:
+              print("PIL 미설치 환경: 원본 PNG를 mipmap 리소스로 복사합니다.")
+              for folder in densities:
                   out_dir = os.path.join(base_res, folder)
                   os.makedirs(out_dir, exist_ok=True)
-                  icon = rgba.resize((px, px), Image.Resampling.LANCZOS)
-                  icon.save(os.path.join(out_dir, "ic_launcher.png"), "PNG")
-                  icon.save(os.path.join(out_dir, "ic_launcher_round.png"), "PNG")
-
+                  shutil.copy2(src_path, os.path.join(out_dir, "ic_launcher.png"))
+                  shutil.copy2(src_path, os.path.join(out_dir, "ic_launcher_round.png"))
               fg_dir = os.path.join(base_res, "mipmap-xxxhdpi")
               os.makedirs(fg_dir, exist_ok=True)
-              canvas_size = 432
-              safe_size = 284
-              fg_canvas = Image.new("RGBA", (canvas_size, canvas_size), (0, 0, 0, 0))
-              fitted = rgba.copy()
-              fitted.thumbnail((safe_size, safe_size), Image.Resampling.LANCZOS)
-              offset = ((canvas_size - fitted.width) // 2, (canvas_size - fitted.height) // 2)
-              fg_canvas.paste(fitted, offset, fitted)
-              fg_canvas.save(os.path.join(fg_dir, "ic_launcher_foreground.png"), "PNG")
+              shutil.copy2(src_path, os.path.join(fg_dir, "ic_launcher_foreground.png"))
           EOF
 
       - name: Ensure Gradle Wrapper exists
