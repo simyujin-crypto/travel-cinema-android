@@ -9,6 +9,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -21,6 +25,41 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        continue-on-error: true
+        with:
+          cmdline-tools-version: '11.0'
+          api-level: 34
+          build-tools-version: '34.0.0'
+
+      - name: Ensure SDK platform-34 and build-tools exist
+        run: |
+          SDK_DIR="${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}"
+          echo "Using SDK_DIR=$SDK_DIR"
+          ls -la "$SDK_DIR" || true
+
+          SDKMANAGER=""
+          for candidate in \
+            "$SDK_DIR/cmdline-tools/latest/bin/sdkmanager" \
+            "$SDK_DIR/cmdline-tools/16.0/bin/sdkmanager" \
+            "$SDK_DIR/cmdline-tools/12.0/bin/sdkmanager" \
+            "$SDK_DIR/cmdline-tools/11.0/bin/sdkmanager" \
+            "$SDK_DIR/tools/bin/sdkmanager"; do
+            if [ -x "$candidate" ]; then
+              SDKMANAGER="$candidate"
+              break
+            fi
+          done
+
+          if [ -n "$SDKMANAGER" ]; then
+            yes | "$SDKMANAGER" --sdk_root="$SDK_DIR" --licenses > /dev/null 2>&1 || true
+            "$SDKMANAGER" --sdk_root="$SDK_DIR" "platform-tools" "platforms;android-34" "build-tools;34.0.0" || true
+          fi
+
+          if [ ! -d "$SDK_DIR/platforms/android-34" ]; then
+            echo "android-34 플랫폼을 찾을 수 없습니다. 설치된 platforms 목록:"
+            ls -la "$SDK_DIR/platforms" || true
+            exit 1
+          fi
 
       - name: Generate Android app icons from travel-cinema.png
         run: |
@@ -44,7 +83,6 @@ jobs:
           src_path = sys.argv[1]
           base_res = "app/src/main/res"
 
-          # 기존 기본 mipmap 아이콘이 충돌하지 않도록 정리 후 재생성
           for d in ["mipmap-mdpi", "mipmap-hdpi", "mipmap-xhdpi", "mipmap-xxhdpi", "mipmap-xxxhdpi"]:
               shutil.rmtree(os.path.join(base_res, d), ignore_errors=True)
 
@@ -66,7 +104,6 @@ jobs:
                   icon.save(os.path.join(out_dir, "ic_launcher.png"), "PNG")
                   icon.save(os.path.join(out_dir, "ic_launcher_round.png"), "PNG")
 
-              # 적응형 아이콘 포그라운드(432x432 캔버스 중앙 약 66% 영역에 배치)
               fg_dir = os.path.join(base_res, "mipmap-xxxhdpi")
               os.makedirs(fg_dir, exist_ok=True)
               canvas_size = 432
@@ -87,7 +124,7 @@ jobs:
           chmod +x gradlew
 
       - name: Build Debug APK
-        run: ./gradlew assembleDebug
+        run: ./gradlew assembleDebug --no-daemon
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
