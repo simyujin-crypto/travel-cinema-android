@@ -24,7 +24,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -131,7 +130,7 @@ fun TravelCinemaApp() {
     val scope = rememberCoroutineScope()
 
     var tripTitle by remember { mutableStateOf("주말 여행 기록") }
-    var selectedTab by remember { mutableStateOf(0) } // 0: 경로/지도, 1: 경유지/편집, 2: 미할당/번들
+    var selectedTab by remember { mutableStateOf(0) }
     val stops = remember { mutableStateListOf<TravelStop>() }
     val unassignedMedia = remember { mutableStateListOf<MediaEntry>() }
 
@@ -1004,7 +1003,7 @@ private fun MediaEntry.toJson(): JSONObject {
 private fun mediaEntryFromJson(obj: JSONObject): MediaEntry {
     val latVal = if (obj.isNull("lat")) null else obj.optDouble("lat")
     val lngVal = if (obj.isNull("lng")) null else obj.optDouble("lng")
-    val tsVal = if (obj.isNull("timestampMs")) null else obj.optLong("timestampMs")
+    val tsVal: Long? = if (obj.isNull("timestampMs")) null else obj.optLong("timestampMs", 0L)
     return MediaEntry(
         id = obj.optString("id", "item_${System.nanoTime()}"),
         uriString = obj.optString("uriString", ""),
