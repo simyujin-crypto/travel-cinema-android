@@ -1001,8 +1001,8 @@ private fun MediaEntry.toJson(): JSONObject {
 }
 
 private fun mediaEntryFromJson(obj: JSONObject): MediaEntry {
-    val latVal = if (obj.isNull("lat")) null else obj.optDouble("lat")
-    val lngVal = if (obj.isNull("lng")) null else obj.optDouble("lng")
+    val latVal: Double? = if (obj.isNull("lat")) null else obj.optDouble("lat", 0.0)
+    val lngVal: Double? = if (obj.isNull("lng")) null else obj.optDouble("lng", 0.0)
     val tsVal: Long? = if (obj.isNull("timestampMs")) null else obj.optLong("timestampMs", 0L)
     return MediaEntry(
         id = obj.optString("id", "item_${System.nanoTime()}"),
