@@ -14,12 +14,46 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -32,7 +66,11 @@ import androidx.core.content.ContextCompat
 import androidx.exifinterface.media.ExifInterface
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
-import com.google.maps.android.compose.*
+import com.google.maps.android.compose.GoogleMap
+import com.google.maps.android.compose.Marker
+import com.google.maps.android.compose.MarkerState
+import com.google.maps.android.compose.Polyline
+import com.google.maps.android.compose.rememberCameraPositionState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -42,7 +80,12 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import kotlin.math.*
+import kotlin.math.abs
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.pow
+import kotlin.math.sin
+import kotlin.math.sqrt
 
 data class MediaEntry(
     val id: String,
@@ -124,10 +167,12 @@ fun TravelCinemaApp() {
     ) { }
 
     LaunchedEffect(Unit) {
-        val missing = permissions.filter {
-            ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED
+        val missing = permissions.filter { perm ->
+            ContextCompat.checkSelfPermission(context, perm) != PackageManager.PERMISSION_GRANTED
         }
-        if (missing.isNotEmpty()) permissionLauncher.launch(missing.toTypedArray())
+        if (missing.isNotEmpty()) {
+            permissionLauncher.launch(missing.toTypedArray())
+        }
     }
 
     fun clusterMedia(entries: List<MediaEntry>) {
@@ -135,10 +180,10 @@ fun TravelCinemaApp() {
         unassignedMedia.clear()
 
         val geoItems = entries
-            .filter { it.lat != null && it.lng != null }
-            .sortedBy { it.timestampMs ?: Long.MAX_VALUE }
+            .filter { item -> item.lat != null && item.lng != null }
+            .sortedBy { item -> item.timestampMs ?: Long.MAX_VALUE }
 
-        unassignedMedia.addAll(entries.filter { it.lat == null || it.lng == null })
+        unassignedMedia.addAll(entries.filter { item -> item.lat == null || item.lng == null })
 
         val clusters = mutableListOf<MutableList<MediaEntry>>()
         for (item in geoItems) {
@@ -146,10 +191,20 @@ fun TravelCinemaApp() {
             val lng = item.lng ?: continue
             val last = clusters.lastOrNull()
             val anchor = last?.firstOrNull()
-            val near = anchor?.lat != null && anchor.lng != null &&
-                distanceMeters(anchor.lat, anchor.lng, lat, lng) <= 200.0
-            val nearTime = anchor?.timestampMs == null || item.timestampMs == null ||
-                abs(item.timestampMs - anchor.timestampMs) <= 3 * 60 * 60 * 1000L
+            val anchorLat = anchor?.lat
+            val anchorLng = anchor?.lng
+            val near = if (anchorLat != null && anchorLng != null) {
+                distanceMeters(anchorLat, anchorLng, lat, lng) <= 200.0
+            } else {
+                false
+            }
+            val anchorTs = anchor?.timestampMs
+            val itemTs = item.timestampMs
+            val nearTime = if (anchorTs != null && itemTs != null) {
+                abs(itemTs - anchorTs) <= 3 * 60 * 60 * 1000L
+            } else {
+                true
+            }
 
             if (last != null && near && nearTime) {
                 last.add(item)
@@ -159,12 +214,19 @@ fun TravelCinemaApp() {
         }
 
         clusters.forEachIndexed { idx, group ->
-            val avgLat = group.mapNotNull { it.lat }.average()
-            val avgLng = group.mapNotNull { it.lng }.average()
-            val hhmm = group.firstOrNull()?.timestampMs?.let {
-                SimpleDateFormat("HH:mm", Locale.KOREA).format(Date(it))
-            }.orEmpty()
-            val label = if (hhmm.isNotEmpty()) "경유지 ${idx + 1} ($hhmm)" else "경유지 ${idx + 1}"
+            val avgLat = group.mapNotNull { m -> m.lat }.average()
+            val avgLng = group.mapNotNull { m -> m.lng }.average()
+            val firstTs = group.firstOrNull()?.timestampMs
+            val hhmm = if (firstTs != null) {
+                SimpleDateFormat("HH:mm", Locale.KOREA).format(Date(firstTs))
+            } else {
+                ""
+            }
+            val label = if (hhmm.isNotEmpty()) {
+                "경유지 ${idx + 1} ($hhmm)"
+            } else {
+                "경유지 ${idx + 1}"
+            }
             stops.add(
                 TravelStop(
                     id = "stop_${idx}_${System.nanoTime()}",
@@ -190,26 +252,27 @@ fun TravelCinemaApp() {
                             uri,
                             Intent.FLAG_GRANT_READ_URI_PERMISSION
                         )
-                    } catch (_: SecurityException) { }
+                    } catch (_: SecurityException) {
+                    }
                     parseMediaUri(context, uri, idx)
                 }
             }
-            val combined = stops.flatMap { it.items } + unassignedMedia + parsed
+            val combined = stops.flatMap { s -> s.items } + unassignedMedia + parsed
             clusterMedia(combined)
             status = "분석 완료: 경유지 ${stops.size}곳, 미할당 ${unassignedMedia.size}개"
         }
     }
 
     fun assignCoordinates(media: MediaEntry, lat: Double, lng: Double) {
-        unassignedMedia.removeAll { it.id == media.id }
+        unassignedMedia.removeAll { item -> item.id == media.id }
         val moved = media.copy(lat = lat, lng = lng)
-        val idx = stops.indexOfFirst { distanceMeters(it.lat, it.lng, lat, lng) <= 200.0 }
+        val idx = stops.indexOfFirst { s -> distanceMeters(s.lat, s.lng, lat, lng) <= 200.0 }
         if (idx >= 0) {
             val target = stops[idx]
-            val merged = (target.items + moved).sortedBy { it.timestampMs ?: Long.MAX_VALUE }
+            val merged = (target.items + moved).sortedBy { m -> m.timestampMs ?: Long.MAX_VALUE }
             stops[idx] = target.copy(
-                lat = merged.mapNotNull { it.lat }.average(),
-                lng = merged.mapNotNull { it.lng }.average(),
+                lat = merged.mapNotNull { m -> m.lat }.average(),
+                lng = merged.mapNotNull { m -> m.lng }.average(),
                 items = merged
             )
         } else {
@@ -231,25 +294,29 @@ fun TravelCinemaApp() {
     fun saveBundle() {
         scope.launch {
             val path = withContext(Dispatchers.IO) {
+                val stopsArray = JSONArray()
+                stops.forEach { stop ->
+                    val itemsArray = JSONArray()
+                    stop.items.forEach { m -> itemsArray.put(m.toJsonObject()) }
+                    val sObj = JSONObject().apply {
+                        put("id", stop.id)
+                        put("title", stop.title)
+                        put("lat", stop.lat)
+                        put("lng", stop.lng)
+                        put("items", itemsArray)
+                    }
+                    stopsArray.put(sObj)
+                }
+
+                val unassignedArray = JSONArray()
+                unassignedMedia.forEach { m -> unassignedArray.put(m.toJsonObject()) }
+
                 val root = JSONObject().apply {
                     put("tripTitle", tripTitle)
-                    put("stops", JSONArray().apply {
-                        stops.forEach { stop ->
-                            put(JSONObject().apply {
-                                put("id", stop.id)
-                                put("title", stop.title)
-                                put("lat", stop.lat)
-                                put("lng", stop.lng)
-                                put("items", JSONArray().apply {
-                                    stop.items.forEach { put(it.toJsonObject()) }
-                                })
-                            })
-                        }
-                    })
-                    put("unassigned", JSONArray().apply {
-                        unassignedMedia.forEach { put(it.toJsonObject()) }
-                    })
+                    put("stops", stopsArray)
+                    put("unassigned", unassignedArray)
                 }
+
                 val dir = File(context.getExternalFilesDir(null), "TravelCinemaBundles").apply { mkdirs() }
                 val safe = tripTitle.replace(Regex("[^가-힣a-zA-Z0-9_-]"), "_").ifBlank { "trip" }
                 val out = File(dir, "${safe}_bundle.json")
@@ -264,47 +331,55 @@ fun TravelCinemaApp() {
         scope.launch {
             val count = withContext(Dispatchers.IO) {
                 val dir = File(context.getExternalFilesDir(null), "TravelCinemaBundles")
-                val file = dir.listFiles()?.filter { it.isFile && it.extension == "json" }
-                    ?.maxByOrNull { it.lastModified() } ?: return@withContext -1
-                val root = JSONObject(file.readText(Charsets.UTF_8))
-                val loadedTitle = root.optString("tripTitle", "불러온 여행 기록")
+                val files = dir.listFiles()?.filter { f -> f.isFile && f.extension == "json" }
+                val file = files?.maxByOrNull { f -> f.lastModified() }
+                if (file == null) {
+                    -1
+                } else {
+                    val root = JSONObject(file.readText(Charsets.UTF_8))
+                    val loadedTitle = root.optString("tripTitle", "불러온 여행 기록")
 
-                val loadedStops = mutableListOf<TravelStop>()
-                val sArr = root.optJSONArray("stops") ?: JSONArray()
-                for (i in 0 until sArr.length()) {
-                    val sObj = sArr.getJSONObject(i)
-                    val mArr = sObj.optJSONArray("items") ?: JSONArray()
-                    val mList = mutableListOf<MediaEntry>()
-                    for (j in 0 until mArr.length()) {
-                        mList.add(mArr.getJSONObject(j).toMediaEntry())
-                    }
-                    loadedStops.add(
-                        TravelStop(
-                            id = sObj.optString("id", "stop_$i"),
-                            title = sObj.optString("title", "경유지 ${i + 1}"),
-                            lat = sObj.optDouble("lat", 37.2636),
-                            lng = sObj.optDouble("lng", 127.0286),
-                            items = mList
+                    val loadedStops = mutableListOf<TravelStop>()
+                    val sArr = root.optJSONArray("stops") ?: JSONArray()
+                    for (i in 0 until sArr.length()) {
+                        val sObj = sArr.getJSONObject(i)
+                        val mArr = sObj.optJSONArray("items") ?: JSONArray()
+                        val mList = mutableListOf<MediaEntry>()
+                        for (j in 0 until mArr.length()) {
+                            mList.add(mArr.getJSONObject(j).toMediaEntry())
+                        }
+                        loadedStops.add(
+                            TravelStop(
+                                id = sObj.optString("id", "stop_$i"),
+                                title = sObj.optString("title", "경유지 ${i + 1}"),
+                                lat = sObj.optDouble("lat", 37.2636),
+                                lng = sObj.optDouble("lng", 127.0286),
+                                items = mList
+                            )
                         )
-                    )
-                }
+                    }
 
-                val loadedUnassigned = mutableListOf<MediaEntry>()
-                val uArr = root.optJSONArray("unassigned") ?: JSONArray()
-                for (i in 0 until uArr.length()) {
-                    loadedUnassigned.add(uArr.getJSONObject(i).toMediaEntry())
-                }
+                    val loadedUnassigned = mutableListOf<MediaEntry>()
+                    val uArr = root.optJSONArray("unassigned") ?: JSONArray()
+                    for (i in 0 until uArr.length()) {
+                        loadedUnassigned.add(uArr.getJSONObject(i).toMediaEntry())
+                    }
 
-                withContext(Dispatchers.Main) {
-                    tripTitle = loadedTitle
-                    stops.clear()
-                    stops.addAll(loadedStops)
-                    unassignedMedia.clear()
-                    unassignedMedia.addAll(loadedUnassigned)
+                    withContext(Dispatchers.Main) {
+                        tripTitle = loadedTitle
+                        stops.clear()
+                        stops.addAll(loadedStops)
+                        unassignedMedia.clear()
+                        unassignedMedia.addAll(loadedUnassigned)
+                    }
+                    loadedStops.sumOf { s -> s.items.size } + loadedUnassigned.size
                 }
-                loadedStops.sumOf { it.items.size } + loadedUnassigned.size
             }
-            status = if (count >= 0) "번들 불러오기 완료 (미디어 ${count}개)" else "저장된 번들 파일이 없습니다."
+            status = if (count >= 0) {
+                "번들 불러오기 완료 (미디어 ${count}개)"
+            } else {
+                "저장된 번들 파일이 없습니다."
+            }
         }
     }
 
@@ -332,8 +407,8 @@ fun TravelCinemaApp() {
             }
             isRendering = false
             status = res.fold(
-                onSuccess = { "MP4 생성 완료: ${it.absolutePath}" },
-                onFailure = { "MP4 생성 실패: ${it.message}" }
+                onSuccess = { outFile -> "MP4 생성 완료: ${outFile.absolutePath}" },
+                onFailure = { err -> "MP4 생성 실패: ${err.message}" }
             )
         }
     }
@@ -347,6 +422,10 @@ fun TravelCinemaApp() {
                 actions = {
                     Button(
                         onClick = { pickerLauncher.launch(arrayOf("image/*", "video/*")) },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF2B6CB0),
+                            contentColor = Color.White
+                        ),
                         modifier = Modifier.padding(end = 8.dp)
                     ) {
                         Text("미디어 추가", fontSize = 13.sp)
@@ -363,100 +442,209 @@ fun TravelCinemaApp() {
         ) {
             OutlinedTextField(
                 value = tripTitle,
-                onValueChange = { tripTitle = it },
+                onValueChange = { newText -> tripTitle = newText },
                 label = { Text("여행 기록 제목") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
-            Spacer(Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected = selectedTab == 0, onClick = { selectedTab = 0 }, label = { Text("지도 (${stops.size})") })
-                FilterChip(selected = selectedTab == 1, onClick = { selectedTab = 1 }, label = { Text("경유지 편집") })
-                FilterChip(selected = selectedTab == 2, onClick = { selectedTab = 2 }, label = { Text("미할당 (${unassignedMedia.size})") })
+                FilterChip(
+                    selected = selectedTab == 0,
+                    onClick = { selectedTab = 0 },
+                    label = { Text("지도 (${stops.size})") }
+                )
+                FilterChip(
+                    selected = selectedTab == 1,
+                    onClick = { selectedTab = 1 },
+                    label = { Text("경유지 편집") }
+                )
+                FilterChip(
+                    selected = selectedTab == 2,
+                    onClick = { selectedTab = 2 },
+                    label = { Text("미할당 (${unassignedMedia.size})") }
+                )
             }
-            Spacer(Modifier.height(8.dp))
-            Surface(color = Color(0xFF18202A), shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(10.dp)) {
-                    Text(status, fontSize = 12.sp, color = Color(0xFFB8C7D9), maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Spacer(modifier = Modifier.height(8.dp))
+            Surface(
+                color = Color(0xFF18202A),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(10.dp)) {
+                    Text(
+                        text = status,
+                        fontSize = 12.sp,
+                        color = Color(0xFFB8C7D9),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
                     if (isRendering) {
-                        Spacer(Modifier.height(6.dp))
-                        LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
+                        Spacer(modifier = Modifier.height(6.dp))
+                        LinearProgressIndicator(
+                            progress = { progress },
+                            modifier = Modifier.fillMaxWidth()
+                        )
                     }
                 }
             }
-            Spacer(Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             when (selectedTab) {
                 0 -> {
-                    val startLatLng = stops.firstOrNull()?.let { LatLng(it.lat, it.lng) } ?: LatLng(37.2636, 127.0286)
-                    val camState = rememberCameraPositionState { position = CameraPosition.fromLatLngZoom(startLatLng, 12f) }
-                    LaunchedEffect(stops.firstOrNull()?.lat, stops.firstOrNull()?.lng) {
-                        stops.firstOrNull()?.let { camState.position = CameraPosition.fromLatLngZoom(LatLng(it.lat, it.lng), 12f) }
+                    val firstStop = stops.firstOrNull()
+                    val startLatLng = if (firstStop != null) {
+                        LatLng(firstStop.lat, firstStop.lng)
+                    } else {
+                        LatLng(37.2636, 127.0286)
                     }
-                    Column(Modifier.weight(1f).fillMaxWidth()) {
-                        pendingMapTarget?.let { target ->
+                    val camState = rememberCameraPositionState {
+                        position = CameraPosition.fromLatLngZoom(startLatLng, 12f)
+                    }
+                    LaunchedEffect(firstStop?.lat, firstStop?.lng) {
+                        if (firstStop != null) {
+                            camState.position = CameraPosition.fromLatLngZoom(
+                                LatLng(firstStop.lat, firstStop.lng),
+                                12f
+                            )
+                        }
+                    }
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                    ) {
+                        val target = pendingMapTarget
+                        if (target != null) {
                             Row(
-                                modifier = Modifier.fillMaxWidth().background(Color(0xFF283A4E), RoundedCornerShape(6.dp)).padding(8.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(Color(0xFF283A4E), RoundedCornerShape(6.dp))
+                                    .padding(8.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Text("지도 탭 위치 지정: ${target.displayName}", fontSize = 12.sp, color = Color(0xFF81D4FA), modifier = Modifier.weight(1f))
-                                TextButton(onClick = { pendingMapTarget = null }) { Text("취소") }
+                                Text(
+                                    text = "지도 탭 위치 지정: ${target.displayName}",
+                                    fontSize = 12.sp,
+                                    color = Color(0xFF81D4FA),
+                                    modifier = Modifier.weight(1f)
+                                )
+                                TextButton(onClick = { pendingMapTarget = null }) {
+                                    Text("취소")
+                                }
                             }
-                            Spacer(Modifier.height(6.dp))
+                            Spacer(modifier = Modifier.height(6.dp))
                         }
                         GoogleMap(
-                            modifier = Modifier.weight(1f).fillMaxWidth(),
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth(),
                             cameraPositionState = camState,
                             onMapClick = { latLng ->
-                                pendingMapTarget?.let { assignCoordinates(it, latLng.latitude, latLng.longitude) }
+                                val activeTarget = pendingMapTarget
+                                if (activeTarget != null) {
+                                    assignCoordinates(activeTarget, latLng.latitude, latLng.longitude)
+                                }
                             }
                         ) {
-                            val pts = stops.map { LatLng(it.lat, it.lng) }
-                            if (pts.size >= 2) Polyline(points = pts, color = Color(0xFF29B6F6), width = 8f)
+                            val pts = stops.map { s -> LatLng(s.lat, s.lng) }
+                            if (pts.size >= 2) {
+                                Polyline(points = pts, color = Color(0xFF29B6F6), width = 8f)
+                            }
                             stops.forEachIndexed { i, s ->
-                                Marker(state = MarkerState(LatLng(s.lat, s.lng)), title = "${i + 1}. ${s.title}", snippet = "${s.items.size}개")
+                                Marker(
+                                    state = MarkerState(position = LatLng(s.lat, s.lng)),
+                                    title = "${i + 1}. ${s.title}",
+                                    snippet = "${s.items.size}개"
+                                )
                             }
                         }
                     }
                 }
 
                 1 -> {
-                    LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LazyColumn(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth(),
+                        contentPadding = PaddingValues(bottom = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                         itemsIndexed(stops, key = { _, s -> s.id }) { sIdx, stop ->
                             Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF18202A))) {
-                                Column(Modifier.padding(10.dp)) {
-                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                        Text(stop.title, fontWeight = FontWeight.Bold, fontSize = 15.sp, modifier = Modifier.weight(1f))
-                                        OutlinedButton(onClick = { editingStop = stop; editedTitle = stop.title }) { Text("이름 수정", fontSize = 12.sp) }
+                                Column(modifier = Modifier.padding(10.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = stop.title,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 15.sp,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        OutlinedButton(onClick = {
+                                            editingStop = stop
+                                            editedTitle = stop.title
+                                        }) {
+                                            Text("이름 수정", fontSize = 12.sp)
+                                        }
                                     }
                                     stop.items.forEachIndexed { mIdx, m ->
                                         Row(
-                                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp).background(Color(0xFF10161E), RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 4.dp),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(top = 4.dp)
+                                                .background(Color(0xFF10161E), RoundedCornerShape(6.dp))
+                                                .padding(horizontal = 8.dp, vertical = 4.dp),
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            Text(m.displayName, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                                            TextButton(onClick = {
-                                                if (mIdx > 0) {
-                                                    val list = stop.items.toMutableList()
-                                                    val item = list.removeAt(mIdx)
-                                                    list.add(mIdx - 1, item)
-                                                    stops[sIdx] = stop.copy(items = list)
-                                                }
-                                            }, enabled = mIdx > 0) { Text("▲") }
-                                            TextButton(onClick = {
-                                                if (mIdx < stop.items.lastIndex) {
-                                                    val list = stop.items.toMutableList()
-                                                    val item = list.removeAt(mIdx)
-                                                    list.add(mIdx + 1, item)
-                                                    stops[sIdx] = stop.copy(items = list)
-                                                }
-                                            }, enabled = mIdx < stop.items.lastIndex) { Text("▼") }
+                                            Text(
+                                                text = m.displayName,
+                                                fontSize = 12.sp,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                            TextButton(
+                                                onClick = {
+                                                    if (mIdx > 0) {
+                                                        val list = stop.items.toMutableList()
+                                                        val item = list.removeAt(mIdx)
+                                                        list.add(mIdx - 1, item)
+                                                        stops[sIdx] = stop.copy(items = list)
+                                                    }
+                                                },
+                                                enabled = mIdx > 0
+                                            ) {
+                                                Text("▲")
+                                            }
+                                            TextButton(
+                                                onClick = {
+                                                    if (mIdx < stop.items.lastIndex) {
+                                                        val list = stop.items.toMutableList()
+                                                        val item = list.removeAt(mIdx)
+                                                        list.add(mIdx + 1, item)
+                                                        stops[sIdx] = stop.copy(items = list)
+                                                    }
+                                                },
+                                                enabled = mIdx < stop.items.lastIndex
+                                            ) {
+                                                Text("▼")
+                                            }
                                             TextButton(onClick = {
                                                 val list = stop.items.toMutableList()
                                                 list.removeAt(mIdx)
-                                                if (list.isEmpty()) stops.removeAt(sIdx) else stops[sIdx] = stop.copy(items = list)
-                                            }) { Text("삭제", color = Color(0xFFEF5350)) }
+                                                if (list.isEmpty()) {
+                                                    stops.removeAt(sIdx)
+                                                } else {
+                                                    stops[sIdx] = stop.copy(items = list)
+                                                }
+                                            }) {
+                                                Text("삭제", color = Color(0xFFEF5350))
+                                            }
                                         }
                                     }
                                 }
@@ -466,24 +654,56 @@ fun TravelCinemaApp() {
                 }
 
                 else -> {
-                    Column(Modifier.weight(1f).fillMaxWidth()) {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                    ) {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(onClick = { saveBundle() }, modifier = Modifier.weight(1f)) { Text("번들 저장") }
-                            OutlinedButton(onClick = { loadBundle() }, modifier = Modifier.weight(1f)) { Text("번들 불러오기") }
+                            OutlinedButton(
+                                onClick = { saveBundle() },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("번들 저장")
+                            }
+                            OutlinedButton(
+                                onClick = { loadBundle() },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("번들 불러오기")
+                            }
                         }
-                        Spacer(Modifier.height(8.dp))
-                        LazyColumn(Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        LazyColumn(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
                             itemsIndexed(unassignedMedia, key = { _, m -> m.id }) { _, item ->
                                 Card(
                                     colors = CardDefaults.cardColors(containerColor = Color(0xFF18202A)),
-                                    modifier = Modifier.fillMaxWidth().clickable {
-                                        pendingMapTarget = item
-                                        selectedTab = 0
-                                        status = "지도에서 '${item.displayName}'의 위치를 탭하세요."
-                                    }
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            pendingMapTarget = item
+                                            selectedTab = 0
+                                            status = "지도에서 '${item.displayName}'의 위치를 탭하세요."
+                                        }
                                 ) {
-                                    Row(Modifier.padding(10.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                        Text(item.displayName, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                                    Row(
+                                        modifier = Modifier.padding(10.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = item.displayName,
+                                            fontSize = 13.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
                                         Text("지도 지정", color = Color(0xFF4FC3F7), fontSize = 12.sp)
                                     }
                                 }
@@ -493,80 +713,116 @@ fun TravelCinemaApp() {
                 }
             }
 
-            Spacer(Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { saveBundle() }, enabled = !isRendering, modifier = Modifier.weight(1f)) {
+                OutlinedButton(
+                    onClick = { saveBundle() },
+                    enabled = !isRendering,
+                    modifier = Modifier.weight(1f)
+                ) {
                     Text("번들 저장")
                 }
-                Button(onClick = { exportMp4() }, enabled = !isRendering, modifier = Modifier.weight(1.4f)) {
-                    Text(if (isRendering) "MP4 생성 중..." else "MP4 영상 생성", fontWeight = FontWeight.Bold)
+                Button(
+                    onClick = { exportMp4() },
+                    enabled = !isRendering,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF00897B),
+                        contentColor = Color.White
+                    ),
+                    modifier = Modifier.weight(1.4f)
+                ) {
+                    Text(
+                        text = if (isRendering) "MP4 생성 중..." else "MP4 영상 생성",
+                        fontWeight = FontWeight.Bold
+                    )
                 }
             }
         }
     }
 
-    editingStop?.let { targetStop ->
+    val targetStop = editingStop
+    if (targetStop != null) {
         AlertDialog(
             onDismissRequest = { editingStop = null },
             title = { Text("경유지 이름 수정") },
             text = {
                 OutlinedTextField(
                     value = editedTitle,
-                    onValueChange = { editedTitle = it },
+                    onValueChange = { newTitle -> editedTitle = newTitle },
                     singleLine = true
                 )
             },
             confirmButton = {
                 TextButton(onClick = {
-                    val idx = stops.indexOfFirst { it.id == targetStop.id }
+                    val idx = stops.indexOfFirst { s -> s.id == targetStop.id }
                     if (idx >= 0 && editedTitle.isNotBlank()) {
                         stops[idx] = stops[idx].copy(title = editedTitle.trim())
                     }
                     editingStop = null
-                }) { Text("저장") }
+                }) {
+                    Text("저장")
+                }
             },
             dismissButton = {
-                TextButton(onClick = { editingStop = null }) { Text("취소") }
+                TextButton(onClick = { editingStop = null }) {
+                    Text("취소")
+                }
             }
         )
     }
 }
 
 private fun parseMediaUri(context: Context, uri: Uri, idx: Int): MediaEntry {
-    val name = uri.lastPathSegment?.substringAfterLast('/')?.substringAfterLast(':') ?: "media_$idx"
-    val mime = context.contentResolver.getType(uri).orEmpty()
-    val isVideo = mime.startsWith("video/") || name.endsWith(".mp4", true) || name.endsWith(".mov", true)
-    var latLng: Pair<Double, Double>? = null
-    var ts: Long? = null
+    val rawSegment = uri.lastPathSegment
+    val afterSlash = if (rawSegment != null) rawSegment.substringAfterLast('/') else "media_$idx"
+    val name = afterSlash.substringAfterLast(':')
+    val mime = context.contentResolver.getType(uri) ?: ""
+    val isVideo = mime.startsWith("video/") ||
+        name.endsWith(".mp4", ignoreCase = true) ||
+        name.endsWith(".mov", ignoreCase = true)
+
+    var latVal: Double? = null
+    var lngVal: Double? = null
+    var tsVal: Long? = null
 
     try {
         context.contentResolver.openInputStream(uri)?.use { stream ->
             val exif = ExifInterface(stream)
-            exif.latLong?.let { latLng = Pair(it[0], it[1]) }
-            val dt = exif.dateTimeOriginal ?: exif.getAttribute(ExifInterface.TAG_DATETIME)
-            if (dt != null) {
-                for (fmt in listOf("yyyy:MM:dd HH:mm:ss", "yyyy-MM-dd HH:mm:ss")) {
-                    val parsed = runCatching { SimpleDateFormat(fmt, Locale.US).parse(dt)?.time }.getOrNull()
-                    if (parsed != null) {
-                        ts = parsed
-                        break
+            val coords = exif.latLong
+            if (coords != null && coords.size >= 2) {
+                latVal = coords[0]
+                lngVal = coords[1]
+            }
+            val dtRaw = exif.dateTimeOriginal ?: exif.getAttribute(ExifInterface.TAG_DATETIME)
+            if (dtRaw != null) {
+                tsVal = parseDateToMillis(dtRaw)
+            }
+        }
+    } catch (_: Exception) {
+    }
+
+    if (isVideo && (latVal == null || lngVal == null)) {
+        val retriever = MediaMetadataRetriever()
+        try {
+            retriever.setDataSource(context, uri)
+            val locStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_LOCATION)
+            if (locStr != null) {
+                val match = Regex("([+-]\\d+(?:\\.\\d+)?)([+-]\\d+(?:\\.\\d+)?)").find(locStr)
+                if (match != null) {
+                    val parsedLat = match.groupValues[1].toDoubleOrNull()
+                    val parsedLng = match.groupValues[2].toDoubleOrNull()
+                    if (parsedLat != null && parsedLng != null) {
+                        latVal = parsedLat
+                        lngVal = parsedLng
                     }
                 }
             }
-        }
-    } catch (_: Exception) { }
-
-    if (isVideo && latLng == null) {
-        val r = MediaMetadataRetriever()
-        try {
-            r.setDataSource(context, uri)
-            val loc = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_LOCATION)
-            val m = loc?.let { Regex("([+-]\\d+(?:\\.\\d+)?)([+-]\\d+(?:\\.\\d+)?)").find(it) }
-            val vLat = m?.groupValues?.getOrNull(1)?.toDoubleOrNull()
-            val vLng = m?.groupValues?.getOrNull(2)?.toDoubleOrNull()
-            if (vLat != null && vLng != null) latLng = Pair(vLat, vLng)
-        } catch (_: Exception) { } finally {
-            runCatching { r.release() }
+        } catch (_: Exception) {
+        } finally {
+            try {
+                retriever.release()
+            } catch (_: Exception) {
+            }
         }
     }
 
@@ -575,44 +831,65 @@ private fun parseMediaUri(context: Context, uri: Uri, idx: Int): MediaEntry {
         uriString = uri.toString(),
         displayName = name,
         isVideo = isVideo,
-        lat = latLng?.first,
-        lng = latLng?.second,
-        timestampMs = ts,
+        lat = latVal,
+        lng = lngVal,
+        timestampMs = tsVal,
         caption = name
     )
 }
 
-private fun distanceMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
-    val r = 6_371_000.0
-    val dLat = Math.toRadians(lat2 - lat1)
-    val dLon = Math.toRadians(lon2 - lon1)
-    val a = sin(dLat / 2).pow(2) + cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) * sin(dLon / 2).pow(2)
-    return r * 2 * atan2(sqrt(a), sqrt(1 - a))
+private fun parseDateToMillis(raw: String): Long? {
+    val patterns = arrayOf("yyyy:MM:dd HH:mm:ss", "yyyy-MM-dd HH:mm:ss")
+    for (pattern in patterns) {
+        try {
+            val formatter = SimpleDateFormat(pattern, Locale.US)
+            val parsedDate = formatter.parse(raw)
+            if (parsedDate != null) {
+                return parsedDate.time
+            }
+        } catch (_: Exception) {
+        }
+    }
+    return null
 }
 
-private fun MediaEntry.toJsonObject(): JSONObject = JSONObject().apply {
-    put("id", id)
-    put("uriString", uriString)
-    put("displayName", displayName)
-    put("isVideo", isVideo)
-    put("lat", lat ?: JSONObject.NULL)
-    put("lng", lng ?: JSONObject.NULL)
-    put("timestampMs", timestampMs ?: JSONObject.NULL)
-    put("caption", caption)
+private fun distanceMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+    val earthRadius = 6_371_000.0
+    val dLat = Math.toRadians(lat2 - lat1)
+    val dLon = Math.toRadians(lon2 - lon1)
+    val sinLat = sin(dLat / 2.0).pow(2)
+    val sinLon = sin(dLon / 2.0).pow(2)
+    val cosProduct = cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2))
+    val a = sinLat + cosProduct * sinLon
+    val c = 2.0 * atan2(sqrt(a), sqrt(1.0 - a))
+    return earthRadius * c
+}
+
+private fun MediaEntry.toJsonObject(): JSONObject {
+    val obj = JSONObject()
+    obj.put("id", id)
+    obj.put("uriString", uriString)
+    obj.put("displayName", displayName)
+    obj.put("isVideo", isVideo)
+    if (lat != null) obj.put("lat", lat) else obj.put("lat", JSONObject.NULL)
+    if (lng != null) obj.put("lng", lng) else obj.put("lng", JSONObject.NULL)
+    if (timestampMs != null) obj.put("timestampMs", timestampMs) else obj.put("timestampMs", JSONObject.NULL)
+    obj.put("caption", caption)
+    return obj
 }
 
 private fun JSONObject.toMediaEntry(): MediaEntry {
-    val latVal: Double? = if (isNull("lat")) null else optDouble("lat", 0.0)
-    val lngVal: Double? = if (isNull("lng")) null else optDouble("lng", 0.0)
-    val tsVal: Long? = if (isNull("timestampMs")) null else optLong("timestampMs", 0L)
+    val parsedLat: Double? = if (isNull("lat")) null else optDouble("lat", 0.0)
+    val parsedLng: Double? = if (isNull("lng")) null else optDouble("lng", 0.0)
+    val parsedTs: Long? = if (isNull("timestampMs")) null else optLong("timestampMs", 0L)
     return MediaEntry(
         id = optString("id", "item_${System.nanoTime()}"),
         uriString = optString("uriString", ""),
         displayName = optString("displayName", "media"),
         isVideo = optBoolean("isVideo", false),
-        lat = latVal,
-        lng = lngVal,
-        timestampMs = tsVal,
+        lat = parsedLat,
+        lng = parsedLng,
+        timestampMs = parsedTs,
         caption = optString("caption", "")
     )
 }
