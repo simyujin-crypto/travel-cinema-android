@@ -34,9 +34,6 @@ jobs:
       - name: Ensure SDK platform-34 and build-tools exist
         run: |
           SDK_DIR="${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}"
-          echo "Using SDK_DIR=$SDK_DIR"
-          ls -la "$SDK_DIR" || true
-
           SDKMANAGER=""
           for candidate in \
             "$SDK_DIR/cmdline-tools/latest/bin/sdkmanager" \
@@ -56,8 +53,7 @@ jobs:
           fi
 
           if [ ! -d "$SDK_DIR/platforms/android-34" ]; then
-            echo "android-34 플랫폼을 찾을 수 없습니다. 설치된 platforms 목록:"
-            ls -la "$SDK_DIR/platforms" || true
+            echo "android-34 플랫폼을 찾을 수 없습니다."
             exit 1
           fi
 
@@ -118,7 +114,6 @@ jobs:
                   fg_canvas.paste(fitted, offset, fitted)
                   fg_canvas.save(os.path.join(fg_dir, "ic_launcher_foreground.png"), "PNG")
           except ImportError:
-              print("PIL 미설치 환경: 원본 PNG를 mipmap 리소스로 복사합니다.")
               for folder in densities:
                   out_dir = os.path.join(base_res, folder)
                   os.makedirs(out_dir, exist_ok=True)
@@ -137,7 +132,7 @@ jobs:
           chmod +x gradlew
 
       - name: Build Debug APK
-        run: ./gradlew assembleDebug --no-daemon
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
