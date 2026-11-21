@@ -124,8 +124,11 @@ jobs:
               shutil.copy2(src_path, os.path.join(fg_dir, "ic_launcher_foreground.png"))
           EOF
 
-      - name: Ensure Gradle Wrapper exists
+      - name: Ensure Gradle Wrapper and gradle.properties exist
         run: |
+          touch gradle.properties
+          grep -q '^android\.useAndroidX=true' gradle.properties || echo 'android.useAndroidX=true' >> gradle.properties
+          grep -q '^android\.nonTransitiveRClass=true' gradle.properties || echo 'android.nonTransitiveRClass=true' >> gradle.properties
           if [ ! -f gradle/wrapper/gradle-wrapper.jar ]; then
             gradle wrapper --gradle-version 8.7 --distribution-type bin
           fi
